@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Galaga-inspired Game</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: black; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// Game constants
+const WIDTH = 800;
+const HEIGHT = 800;
+const PLAYER_WIDTH = 40;
+const PLAYER_HEIGHT = 40;
+const ENEMY_WIDTH = 40;
+const ENEMY_HEIGHT = 40;
+const BULLET_WIDTH = 5;
+const BULLET_HEIGHT = 10;
+const BULLET_SPEED = 7;
+const PLAYER_SPEED = 5;
+const SPECIAL_SHIP_SPAWN_INTERVAL = 30 * 60; // 30 seconds (60 FPS)
+
+// Game variables
+let player = {
+    x: WIDTH / 2 - PLAYER_WIDTH / 2,
+    y: HEIGHT - PLAYER_HEIGHT - 10,
+    lives: 3,
+    shootAngle: 0
+};
+let enemies = [];
+let playerBullets = [];
+let enemyBullets = [];
+let specialShip = null;
+let specialShipSpawnTimer = 0;
+let score = 0;
+let currentLevel = 1;
+let gameOver = false;
+let levelComplete = false;
+
+// Load images
+const playerImg = new Image();
+playerImg.src = 'player_ship.png';
+const enemyImg = new Image();
+enemyImg.src = 'enemy_ship.png';
+const specialShipImg = new Image();
+specialShipImg.src = 'special_ship.png';
+
+// Sound effects (assuming you have these audio files)
+const playerShootSound = new Audio('sounds/player_shoot.wav');
+const enemyShootSound = new Audio('sounds/enemy_shoot.wav');
+const enemyHitSound = new Audio('sounds/enemy_hit.wav');
+const playerHitSound = new Audio('sounds/player_hit.wav');
+const extraLifeSound = new Audio('sounds/extra_life.wav');
+
+// Background music
+const backgroundMusic = new Audio('sounds/background_music.mp3');
+backgroundMusic.loop = true;
+backgroundMusic.volume = 0.5;
+
+function createEnemies() {
+    enemies = [];
+    const rows = Math.min(3 + currentLevel, 7);
+    const cols = Math.min(6 + currentLevel, 12);
+    
+    const patterns = [
+        (i, j) => ({ x: j * (WIDTH / cols), y: i * 50 }),
+        (i, j) => ({ x: WIDTH / 2 + (j - cols / 2) * 60, y: i * 50 }),
+        (i, j) => ({ x: WIDTH / 2 + Math.cos(i * Math.PI / 3) * 200, y: 100 + Math.sin(j * Math.PI / 3) * 150 }),
+        (i, j) => ({ x: Math.random() * (WIDTH - ENEMY_WIDTH), y: Math.random() * -200 })
+    ];
+    
+    const pattern = patterns[currentLevel % patterns.length];
+    
+    for (let i = 0; i < rows; i++) {
+        for (let j = 0; j < cols; j++) {
+            const { x, y } = pattern(i, j);
+            enemies.push({
+                x,
+                y,
+                speed: Math.random() * 0.5 + 0.5 + currentLevel * 0.2,
+                angle: Math.random() * Math.PI * 2,
+                radius: Math.random() * 100 + 50,
+                centerX: x,
+                centerY: y,
+                descentSpeed: Math.random() * 0.3 + 0.2 + currentLevel * 0.1,
+                points: Math.floor(Math.random() * 20 + 10) * currentLevel
+            });
+        }
+    }
+}
+
+function spawnSpecialShip() {
+    specialShip = {
+        x: Math.random() < 0.5 ? -60 : WIDTH,
+        y: Math.random() * HEIGHT / 2 + 50,
+        speed: Math.random() < 0.5 ? 2 : -2,
+        radius: 30
+    };
+}
+
+function resetGame() {
+    player.x = WIDTH / 2 - PLAYER_WIDTH / 2;
+    player.y = HEIGHT - PLAYER_HEIGHT - 10;
+    player.lives = 3;
+    player.shootAngle = 0;
+    gameOver = false;
+    levelComplete = false;
+    currentLevel = 1;
+    score = 0;
+    specialShip = null;
+    specialShipSpawnTimer = 0;
+    playerBullets = [];
+    enemyBullets = [];
+    createEnemies();
+}
+
+function startNextLevel() {
+    currentLevel++;
+    levelComplete = false;
+    specialShipSpawnTimer = 0;
+    playerBullets = [];
+    enemyBullets = [];
+    createEnemies();
+}
+
+function enemyShoot(enemy) {
+    const bulletX = enemy.x + ENEMY_WIDTH / 2 - BULLET_WIDTH / 2;
+    const bulletY = enemy.y + ENEMY_HEIGHT;
+
+    let speedX = 0;
+    let speedY = BULLET_SPEED;
+
+    if (Math.random() < 0.3) {
+        const dx = player.x + PLAYER_WIDTH / 2 - bulletX;
+        const dy = player.y - bulletY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        speedX = BULLET_SPEED * dx / distance;
+        speedY = BULLET_SPEED * dy / distance;
+    }
+
+    enemyShootSound.play();
+    return { x: bulletX, y: bulletY, speedX, speedY };
+}
+
+function update() {
+    if (!gameOver && !levelComplete) {
+        // Move player
+        if (keys.ArrowLeft && player.x > 0) player.x -= PLAYER_SPEED;
+        if (keys.ArrowRight && player.x < WIDTH - PLAYER_WIDTH) player.x += PLAYER_SPEED;
+
+        // Move enemies
+        enemies.forEach(enemy => {
+            enemy.angle += enemy.speed * 0.05;
+            enemy.x = enemy.centerX + Math.cos(enemy.angle) * enemy.radius;
+            enemy.y = enemy.centerY + Math.sin(enemy.angle) * enemy.radius;
+            
+            enemy.centerY += enemy.descentSpeed;
+            
+            if (enemy.y > HEIGHT) {
+                enemy.y = -ENEMY_HEIGHT;
+                enemy.centerY = -ENEMY_HEIGHT;
+            }
+
+            if (Math.random() < 0.001) {
+                enemyBullets.push(enemyShoot(enemy));
+            }
+        });
+
+        // Move special ship
+        if (specialShip) {
+            specialShip.x += specialShip.speed;
+            if ((specialShip.x < -60 && specialShip.speed < 0) || (specialShip.x > WIDTH && specialShip.speed > 0)) {
+                specialShip = null;
+            }
+        } else {
+            specialShipSpawnTimer++;
+            if (specialShipSpawnTimer >= SPECIAL_SHIP_SPAWN_INTERVAL) {
+                spawnSpecialShip();
+                specialShipSpawnTimer = 0;
+            }
+        }
+
+        // Move bullets
+        playerBullets = playerBullets.filter(bullet => {
+            bullet.x += BULLET_SPEED * Math.sin(bullet.angle * Math.PI / 180);
+            bullet.y -= BULLET_SPEED * Math.cos(bullet.angle * Math.PI / 180);
+            return bullet.y > 0 && bullet.x > 0 && bullet.x < WIDTH;
+        });
+
+        enemyBullets = enemyBullets.filter(bullet => {
+            bullet.x += bullet.speedX;
+            bullet.y += bullet.speedY;
+            return bullet.y < HEIGHT && bullet.x > 0 && bullet.x < WIDTH;
+        });
+
+        // Check collisions
+        enemies = enemies.filter(enemy => {
+            for (let i = playerBullets.length - 1; i >= 0; i--) {
+                const bullet = playerBullets[i];
+                if (bullet.x > enemy.x && bullet.x < enemy.x + ENEMY_WIDTH &&
+                    bullet.y > enemy.y && bullet.y < enemy.y + ENEMY_HEIGHT) {
+                    score += enemy.points;
+                    playerBullets.splice(i, 1);
+                    enemyHitSound.play();
+                    return false;
+                }
+            }
+            return true;
+        });
+
+        if (specialShip) {
+            for (let i = playerBullets.length - 1; i >= 0; i--) {
+                const bullet = playerBullets[i];
+                if (bullet.x > specialShip.x && bullet.x < specialShip.x + 60 &&
+                    bullet.y > specialShip.y && bullet.y < specialShip.y + 60) {
+                    player.lives++;
+                    extraLifeSound.play();
+                    specialShip = null;
+                    playerBullets.splice(i, 1);
+                    break;
+                }
+            }
+        }
+
+        enemyBullets.forEach(bullet => {
+            if (bullet.x > player.x && bullet.x < player.x + PLAYER_WIDTH &&
+                bullet.y > player.y && bullet.y < player.y + PLAYER_HEIGHT) {
+                player.lives--;
+                playerHitSound.play();
+                if (player.lives <= 0) {
+                    gameOver = true;
+                }
+            }
+        });
+
+        if (enemies.length === 0) {
+            levelComplete = true;
+        }
+    }
+}
+
+function draw() {
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+    ctx.drawImage(playerImg, player.x, player.y, PLAYER_WIDTH, PLAYER_HEIGHT);
+
+    // Draw direction indicator line
+    ctx.beginPath();
+    ctx.moveTo(player.x + PLAYER_WIDTH / 2, player.y);
+    ctx.lineTo(
+        player.x + PLAYER_WIDTH / 2 + 20 * Math.sin(player.shootAngle * Math.PI / 180),
+        player.y - 20 * Math.cos(player.shootAngle * Math.PI / 180)
+    );
+    ctx.strokeStyle = 'red';
+    ctx.stroke();
+
+    enemies.forEach(enemy => {
+        ctx.drawImage(enemyImg, enemy.x, enemy.y, ENEMY_WIDTH, ENEMY_HEIGHT);
+    });
+
+    if (specialShip) {
+        ctx.drawImage(specialShipImg, specialShip.x, specialShip.y, 60, 60);
+    }
+
+    ctx.fillStyle = 'white';
+    playerBullets.forEach(bullet => {
+        ctx.fillRect(bullet.x, bullet.y, BULLET_WIDTH, BULLET_HEIGHT);
+    });
+
+    ctx.fillStyle = 'yellow';
+    enemyBullets.forEach(bullet => {
+        ctx.fillRect(bullet.x, bullet.y, BULLET_WIDTH, BULLET_HEIGHT);
+    });
+
+    ctx.fillStyle = 'white';
+    ctx.font = '24px Arial';
+    ctx.fillText(`Lives: ${player.lives}`, 10, 30);
+    ctx.fillText(`Level: ${currentLevel}`, WIDTH - 100, 30);
+    ctx.fillText(`Score: ${score}`, WIDTH / 2 - 50, 30);
+
+    if (gameOver) {
+        ctx.fillStyle = 'white';
+        ctx.font = '48px Arial';
+        ctx.fillText('Game Over!', WIDTH / 2 - 100, HEIGHT / 2);
+        ctx.font = '24px Arial';
+        ctx.fillText(`Final Score: ${score}`, WIDTH / 2 - 70, HEIGHT / 2 + 40);
+        ctx.fillText('Press R to restart', WIDTH / 2 - 80, HEIGHT / 2 + 80);
+    } else if (levelComplete) {
+        ctx.fillStyle = 'white';
+        ctx.font = '48px Arial';
+        ctx.fillText('Level Complete!', WIDTH / 2 - 140, HEIGHT / 2);
+        ctx.font = '24px Arial';
+        ctx.fillText(`Score: ${score}`, WIDTH / 2 - 50, HEIGHT / 2 + 40);
+        ctx.fillText('Press R for next level', WIDTH / 2 - 100, HEIGHT / 2 + 80);
+    }
+}
+
+function gameLoop() {
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+
+// Keyboard input handling
+const keys = {};
+document.addEventListener('keydown', (e) => {
+    keys[e.code] = true;
+    if (e.code === 'Space' && !gameOver && !levelComplete) {
+        playerBullets.push({
+            x: player.x + PLAYER_WIDTH / 2,
+            y: player.y,
+            angle: player.shootAngle
+        });
+        playerShootSound.play();
+    } else if (e.code === 'KeyR') {
+        if (gameOver) {
+            resetGame();
+        } else if (levelComplete) {
+            startNextLevel();
+        }
+    } else if (e.code === 'KeyX') {
+        player.shootAngle = Math.min(player.shootAngle + 15, 60);
+    } else if (e.code === 'KeyC') {
+        player.shootAngle = Math.max(player.shootAngle - 15, -60);
+    }
+});
+document.addEventListener('keyup', (e) => {
+    keys[e.code] = false;
+});
+
+// Start the game
+canvas.width = WIDTH;
+canvas.height = HEIGHT;
+resetGame();
+backgroundMusic.play();
+gameLoop();
+</script>
+</body>
+</html>
